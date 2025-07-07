@@ -1,0 +1,75 @@
+# The MIT License (MIT)
+
+# Copyright (c) 2025 luau-project [https://github.com/luau-project](https://github.com/luau-project)
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+name: Get Lua 5.5.0 sources
+
+on:
+  workflow_call:
+    inputs:
+      # 'roberto': fseek patch provided by Roberto
+      # 'custom' : my fseek patch
+      # 'none'   : do not apply patches for fseek
+      patch-kind:
+        required: true
+        type: string
+
+jobs:
+  get-src:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download Lua 5.5.0 tarball
+        run: curl -L -O https://lua.org/work/lua-5.5.0-beta.tar.gz
+
+      - name: Extract Lua 5.5.0 tarball
+        run: tar -xf lua-5.5.0-beta.tar.gz
+
+        # the patch below was reported at
+        # https://groups.google.com/g/lua-l/c/N1MMWqG4Ad0/m/5Yv9GpqpBAAJ
+      - name: Apply patch to fix the built DLL name
+        run: cd lua-5.5.0-beta && patch -Np1 -i ../fix-mingw-dllname.patch
+
+        # fseek issue initially reported at
+        # http://lua-users.org/lists/lua-l/2015-05/msg00315.html
+        # with a solution provided by Roberto at
+        # http://lua-users.org/lists/lua-l/2015-05/msg00370.html
+      - name: Apply Roberto's fseek patch
+        if: ${{ inputs.patch-kind == 'roberto' }}
+        run: cd lua-5.5.0-beta && patch -Np1 -i ../roberto-fseek.patch
+
+        # below, my proposed fseek patch
+        # for both MinGW / MinGW-w64
+      - name: Apply my custom fseek patch
+        if: ${{ inputs.patch-kind == 'custom' }}
+        run: cd lua-5.5.0-beta && patch -Np1 -i ../custom-fseek.patch
+
+      - name: Upload Lua 5.5.0 patched source code
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ inputs.patch-kind }}
+          path: lua-5.5.0-beta
+          retention-days: 1
+          if-no-files-found: error

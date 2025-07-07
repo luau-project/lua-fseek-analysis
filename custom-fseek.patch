@@ -1,0 +1,18 @@
+diff -Naur lua-5.5.0-beta-orig/src/liolib.c lua-5.5.0-beta/src/liolib.c
+--- lua-5.5.0-beta-orig/src/liolib.c	2025-06-28 07:06:32.000000000 -0300
++++ lua-5.5.0-beta/src/liolib.c	2025-07-07 08:38:56.314446721 -0300
+@@ -122,6 +122,14 @@
+ #define l_ftell(f)		ftello(f)
+ #define l_seeknum		off_t
+ 
++#elif defined(LUA_USE_WINDOWS) && defined(__MINGW32__)	/* }{ */
++
++#include <stdio.h>
++
++#define l_fseek(f,o,w)		fseeko64(f,o,w)
++#define l_ftell(f)		ftello64(f)
++#define l_seeknum		off64_t
++
+ #elif defined(LUA_USE_WINDOWS) && !defined(_CRTIMP_TYPEINFO) \
+    && defined(_MSC_VER) && (_MSC_VER >= 1400)	/* }{ */
+ 

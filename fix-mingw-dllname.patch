@@ -1,0 +1,12 @@
+diff -Naur lua-5.5.0-beta-orig/src/Makefile lua-5.5.0-beta/src/Makefile
+--- lua-5.5.0-beta-orig/src/Makefile	2025-06-26 09:57:29.000000000 -0300
++++ lua-5.5.0-beta/src/Makefile	2025-07-06 20:17:25.089717212 -0300
+@@ -127,7 +127,7 @@
+ 	$(MAKE) $(ALL) SYSCFLAGS="-DLUA_USE_MACOSX -DLUA_USE_READLINE" SYSLIBS="-lreadline"
+ 
+ mingw:
+-	$(MAKE) "LUA_A=lua54.dll" "LUA_T=lua.exe" \
++	$(MAKE) "LUA_A=lua55.dll" "LUA_T=lua.exe" \
+ 	"AR=$(CC) -shared -o" "RANLIB=strip --strip-unneeded" \
+ 	"SYSCFLAGS=-DLUA_BUILD_AS_DLL" "SYSLIBS=" "SYSLDFLAGS=-s" lua.exe
+ 	$(MAKE) "LUAC_T=luac.exe" luac.exe

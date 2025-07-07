@@ -1,0 +1,17 @@
+diff -Naur lua-5.5.0-beta-orig/src/luaconf.h lua-5.5.0-beta/src/luaconf.h
+--- lua-5.5.0-beta-orig/src/luaconf.h	2025-06-28 07:06:32.000000000 -0300
++++ lua-5.5.0-beta/src/luaconf.h	2025-07-07 08:30:38.422129003 -0300
+@@ -820,7 +820,13 @@
+ */
+ 
+ 
++#if defined(liolib_c) && defined(__MINGW32__)
++#include <sys/types.h>
+ 
++#define l_fseek(f,o,w) fseeko(f,o,w)
++#define l_ftell(f) ftello(f)
++#define l_seeknum off_t
++#endif
+ 
+ 
+ #endif

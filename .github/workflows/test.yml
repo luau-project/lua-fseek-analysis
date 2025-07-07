@@ -1,0 +1,475 @@
+# The MIT License (MIT)
+
+# Copyright (c) 2025 luau-project [https://github.com/luau-project](https://github.com/luau-project)
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+name: Test fseek
+
+on: push
+
+env:
+  ISO_URL: https://cdimage.debian.org/debian-cd/current/amd64/iso-dvd
+  ISO_FILENAME: debian-12.11.0-amd64-DVD-1.iso
+
+jobs:
+
+  get-roberto-fseek-src:
+    uses: ./.github/workflows/get-lua-src.yml
+    with:
+      patch-kind: roberto
+
+  get-custom-fseek-src:
+    uses: ./.github/workflows/get-lua-src.yml
+    with:
+      patch-kind: custom
+
+  get-none-fseek-src:
+    uses: ./.github/workflows/get-lua-src.yml
+    with:
+      patch-kind: none
+
+  mingw-w64-msys2:
+    runs-on: windows-latest
+    needs:
+      - get-roberto-fseek-src
+      - get-custom-fseek-src
+      - get-none-fseek-src
+
+    defaults:
+      run:
+        shell: cmd
+
+    strategy:
+
+      fail-fast: false
+
+      matrix:
+        patch-kind:
+          - roberto
+          - custom
+          - none
+
+        MSYS2-CONFIG:
+          - { sys: mingw64, env: x86_64 }
+          - { sys: ucrt64, env: ucrt-x86_64 }
+          - { sys: clang64, env: clang-x86_64 }
+
+    env:
+      PACKAGES_TO_INSTALL: 'mingw-w64-${{ matrix.MSYS2-CONFIG.env }}-cc mingw-w64-${{ matrix.MSYS2-CONFIG.env }}-make'
+      MSYS2_BASH: 'C:\msys64\usr\bin\bash.exe'
+      MSYS2_MINGW_W64_BIN: 'C:\msys64\${{ matrix.MSYS2-CONFIG.sys }}\bin'
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Restore huge file
+        id: restore-file
+        uses: actions/cache/restore@v4
+        with:
+          path: file.iso
+          key: file
+
+      - name: Download huge file
+        if: ${{ steps.restore-file.outputs.cache-hit != 'true' }}
+        run: |
+          curl -L -O "${{ env.ISO_URL }}/${{ env.ISO_FILENAME }}"
+          move "${{ env.ISO_FILENAME }}" "file.iso"
+
+      - name: Save huge file
+        if: ${{ steps.restore-file.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: file.iso
+          key: file
+
+      - name: Download Lua 5.5.0 patched source code
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ matrix.patch-kind }}
+
+      # When running many concurrent jobs,
+      # pacman might fail to download packages
+      # from MSYS2 servers due a high load.
+      # So, retry the installation a few times
+      - name: Install packages (C compiler and GNU Make)
+        run: |
+          SET "TRIES=0"
+          SET "MAX_TRIES=5"
+          SET "SECS_TO_WAIT=1"
+
+          GOTO :INSTALL_FROM_MSYS2
+
+          :INSTALL_FROM_MSYS2
+          ${{ env.MSYS2_BASH }} -lc "pacman -S ${{ env.PACKAGES_TO_INSTALL }} --noconfirm"
+
+          IF %ERRORLEVEL% EQU 0 (
+            echo ${{ env.MSYS2_MINGW_W64_BIN }}>>${{ github.path }}
+          ) ELSE (
+            SET /A "TRIES=TRIES+1"
+            IF %TRIES% LSS %MAX_TRIES% (
+              echo Attempt %TRIES% out of %MAX_TRIES% to install packages failed
+              SET /A "SECS_TO_WAIT*=2"
+              echo Waiting %SECS_TO_WAIT% seconds to retry
+              SLEEP %SECS_TO_WAIT%
+              GOTO :INSTALL_FROM_MSYS2
+            ) ELSE (
+              echo Failed to install mingw-w64 and dependencies from MSYS2
+              EXIT /B 1
+            )
+          )
+
+      - name: Display C compiler info
+        run: cc --version
+
+      - name: Build Lua 5.5.0 (beta)
+        run: mingw32-make mingw CC=cc
+
+      - name: Run test script
+        run: src\lua.exe main.lua
+
+  msvc-or-clang-cl:
+    runs-on: windows-latest
+    needs:
+      - get-roberto-fseek-src
+      - get-custom-fseek-src
+      - get-none-fseek-src
+
+    defaults:
+      run:
+        shell: cmd
+
+    strategy:
+
+      fail-fast: false
+
+      matrix:
+        patch-kind:
+          - roberto
+          - custom
+          - none
+
+        toolchain:
+          - { cc: cl, linker: link }
+          - { cc: clang-cl, linker: lld-link }
+
+    env:
+      CFLAGS: /c /O2 /W3 /MD /I. /DLUA_BUILD_AS_DLL /D_CRT_SECURE_NO_DEPRECATE
+      LDFLAGS: /DLL /OUT:lua55.dll /IMPLIB:lua.lib
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Restore huge file
+        id: restore-file
+        uses: actions/cache/restore@v4
+        with:
+          path: file.iso
+          key: file
+
+      - name: Download huge file
+        if: ${{ steps.restore-file.outputs.cache-hit != 'true' }}
+        run: |
+          curl -L -O "${{ env.ISO_URL }}/${{ env.ISO_FILENAME }}"
+          MOVE "${{ env.ISO_FILENAME }}" "file.iso"
+
+      - name: Save huge file
+        if: ${{ steps.restore-file.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: file.iso
+          key: file
+
+      - name: Download Lua 5.5.0 patched source code
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ matrix.patch-kind }}
+
+      - name: Setup MSVC command prompt
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: ${{ runner.arch }}
+
+      - name: Display toolchain info
+        run: |
+          IF "${{ matrix.toolchain.cc }}"=="cl" (
+            ${{ matrix.toolchain.cc }}
+          ) ELSE (
+            ${{ matrix.toolchain.cc }} --version
+            ${{ matrix.toolchain.linker }} --version
+          )
+
+      - name: Compile Lua 5.5.0 (beta)
+        working-directory: src
+        run: |
+          FOR %%F IN (l*.c) DO (
+            IF NOT "%%F"=="luac.c" (
+              ${{ matrix.toolchain.cc }} ${{ env.CFLAGS }} "/Fo%%F.obj" "%%F"
+            )
+          )
+
+          MOVE "lua.c.obj" obj-interpreter
+
+      - name: Link Lua 5.5.0 (beta) DLL
+        working-directory: src
+        run: |
+          ${{ matrix.toolchain.linker }} ${{ env.LDFLAGS }} *.obj
+
+      - name: Link Lua 5.5.0 (beta) interpreter
+        working-directory: src
+        run: |
+          MOVE obj-interpreter "lua.c.obj"
+          ${{ matrix.toolchain.linker }} /OUT:lua.exe lua.c.obj lua.lib
+
+      - name: Run test script
+        run: src\lua.exe main.lua
+
+  mingw-w64-github:
+    runs-on: windows-latest
+    needs:
+      - get-roberto-fseek-src
+      - get-custom-fseek-src
+      - get-none-fseek-src
+
+    defaults:
+      run:
+        shell: cmd
+
+    strategy:
+
+      fail-fast: false
+
+      matrix:
+        patch-kind:
+          - roberto
+          - custom
+          - none
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Restore huge file
+        id: restore-file
+        uses: actions/cache/restore@v4
+        with:
+          path: file.iso
+          key: file
+
+      - name: Download huge file
+        if: ${{ steps.restore-file.outputs.cache-hit != 'true' }}
+        run: |
+          curl -L -O "${{ env.ISO_URL }}/${{ env.ISO_FILENAME }}"
+          MOVE "${{ env.ISO_FILENAME }}" "file.iso"
+
+      - name: Save huge file
+        if: ${{ steps.restore-file.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: file.iso
+          key: file
+
+      - name: Download Lua 5.5.0 patched source code
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ matrix.patch-kind }}
+
+      - name: Display C compiler info
+        run: gcc --version
+
+      - name: Build Lua 5.5.0 (beta)
+        run: mingw32-make mingw
+
+      - name: Run test script
+        run: src\lua.exe main.lua
+
+  mingw:
+    runs-on: windows-latest
+    needs:
+      - get-roberto-fseek-src
+      - get-custom-fseek-src
+      - get-none-fseek-src
+
+    defaults:
+      run:
+        shell: cmd
+
+    strategy:
+
+      fail-fast: false
+
+      matrix:
+        patch-kind:
+          - roberto
+          - custom
+          - none
+
+        gcc-version:
+          - 4.8.1
+          - 6.3.0
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Restore huge file
+        id: restore-file
+        uses: actions/cache/restore@v4
+        with:
+          path: file.iso
+          key: file
+
+      - name: Download huge file
+        if: ${{ steps.restore-file.outputs.cache-hit != 'true' }}
+        run: |
+          curl -L -O "${{ env.ISO_URL }}/${{ env.ISO_FILENAME }}"
+          MOVE "${{ env.ISO_FILENAME }}" "file.iso"
+
+      - name: Save huge file
+        if: ${{ steps.restore-file.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: file.iso
+          key: file
+
+      - name: Download Lua 5.5.0 patched source code
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ matrix.patch-kind }}
+
+        # we are going to install
+        # the defunct MinGW hosted
+        # which on sourceforge
+      - name: Download and extract the legacy MinGW
+        run: |
+          @ECHO OFF
+          SETLOCAL ENABLEDELAYEDEXPANSION ENABLEEXTENSIONS
+
+          cd "${{ runner.temp }}"
+          IF EXIST ".\MinGW\" RMDIR /S /Q ".\MinGW"
+          MKDIR "MinGW"
+          cd MinGW
+
+          SET "CURL=curl --ssl-no-revoke"
+          SET SEVEN_ZIP="%ProgramFiles%\7-Zip\7z.exe"
+
+          SET "MINGW32_GET_PACKAGE_VER=mingw-get-0.6.2-beta-20131004-1"
+          SET "MINGW32_PACKAGE_VER=0.6.2-mingw32-beta-20131004-1"
+
+          @FOR %%P IN (mingw-get-setup) DO @(
+            @FOR %%J IN (dll xml) DO @(
+              ECHO Downloading https://sourceforge.net/projects/mingw/files/Installer/mingw-get/%MINGW32_GET_PACKAGE_VER%/%%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz
+              %CURL% -L -O "https://sourceforge.net/projects/mingw/files/Installer/mingw-get/%MINGW32_GET_PACKAGE_VER%/%%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz"
+
+              IF %ERRORLEVEL% NEQ 0 (
+                ECHO "Failed to download %%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz"
+                EXIT /B 1
+              )
+
+              %SEVEN_ZIP% x %%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz
+
+              IF %ERRORLEVEL% NEQ 0 (
+                ECHO "Failed to extract xz file %%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz"
+                EXIT /B 1
+              )
+
+              %SEVEN_ZIP% x %%P-%MINGW32_PACKAGE_VER%-%%J.tar
+
+              IF %ERRORLEVEL% NEQ 0 (
+                ECHO "Failed to extract xz file %%P-%MINGW32_PACKAGE_VER%-%%J.tar"
+                EXIT /B 1
+              )
+            )
+          )
+
+          @FOR %%P IN (pkginfo) DO @(
+            @FOR %%J IN (bin) DO @(
+              ECHO Downloading https://sourceforge.net/projects/mingw/files/Installer/mingw-get/%MINGW32_GET_PACKAGE_VER%/%%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz
+              %CURL% -L -O "https://sourceforge.net/projects/mingw/files/Installer/mingw-get/%MINGW32_GET_PACKAGE_VER%/%%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz"
+
+              IF %ERRORLEVEL% NEQ 0 (
+                ECHO "Failed to download %%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz"
+                EXIT /B 1
+              )
+
+              %SEVEN_ZIP% x %%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz
+
+              IF %ERRORLEVEL% NEQ 0 (
+                ECHO "Failed to extract xz file %%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz"
+                EXIT /B 1
+              )
+
+              %SEVEN_ZIP% x %%P-%MINGW32_PACKAGE_VER%-%%J.tar
+
+              IF %ERRORLEVEL% NEQ 0 (
+                ECHO "Failed to extract xz file %%P-%MINGW32_PACKAGE_VER%-%%J.tar"
+                EXIT /B 1
+              )
+            )
+          )
+
+          @FOR %%P IN (mingw-get) DO @(
+            @FOR %%J IN (bin gui lic src) DO @(
+              ECHO Downloading https://sourceforge.net/projects/mingw/files/Installer/mingw-get/%MINGW32_GET_PACKAGE_VER%/%%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz
+              %CURL% -L -O "https://sourceforge.net/projects/mingw/files/Installer/mingw-get/%MINGW32_GET_PACKAGE_VER%/%%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz"
+
+              IF %ERRORLEVEL% NEQ 0 (
+                ECHO "Failed to download %%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz"
+                EXIT /B 1
+              )
+
+              %SEVEN_ZIP% x %%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz
+
+              IF %ERRORLEVEL% NEQ 0 (
+                ECHO "Failed to extract xz file %%P-%MINGW32_PACKAGE_VER%-%%J.tar.xz"
+                EXIT /B 1
+              )
+
+              %SEVEN_ZIP% x %%P-%MINGW32_PACKAGE_VER%-%%J.tar
+
+              IF %ERRORLEVEL% NEQ 0 (
+                ECHO "Failed to extract xz file %%P-%MINGW32_PACKAGE_VER%-%%J.tar"
+                EXIT /B 1
+              )
+            )
+          )
+
+          echo ${{ runner.temp }}\MinGW\bin>>${{ github.path }}
+
+      - name: Update MinGW catalogue
+        if: ${{ matrix.gcc-version == '6.3.0' }}
+        run: mingw-get update
+
+      - name: Install packages (C compiler and GNU Make)
+        run: mingw-get install mingw32-base mingw32-libiconv "gcc=${{ matrix.gcc-version }}" mingw32-make
+
+      - name: Display C compiler info
+        run: mingw32-gcc-${{ matrix.gcc-version }} --version
+
+      - name: Build Lua 5.5.0 (beta)
+        run: mingw32-make mingw "CC=mingw32-gcc-${{ matrix.gcc-version }}"
+
+      - name: Run test script
+        run: src\lua.exe main.lua
